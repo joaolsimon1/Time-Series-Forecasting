@@ -1,0 +1,482 @@
+---
+title: "Análise de Séries Temporais - Trabalho Final"
+subtitle: "Modelagem da Temperatura Máxima de Porto Alegre (RS)"
+author: "João L. Simon"
+output:
+  html_document:
+    code_download: true
+    code_folding: hide
+    theme: flatly
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+---
+
+```{r setup, include=FALSE, warning=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(ggplot2)
+library(dplyr)
+library(plotly)
+library(hrbrthemes)
+library(zoo)
+library(forecast)
+library(tseries)
+library(lubridate)
+library(highcharter)
+library(tidyverse)
+library(kableExtra)
+```
+
+```{r}
+df12 <- read.csv("INMET_S_RS_A801_PORTO ALEGRE_01-01-2012_A_31-12-2012.csv", sep = ";", skip = 9, header = F)
+df13 <- read.csv("INMET_S_RS_A801_PORTO ALEGRE_01-01-2013_A_31-12-2013.csv", sep = ";", skip = 9, header = F)
+df14 <- read.csv("INMET_S_RS_A801_PORTO ALEGRE_01-01-2014_A_31-12-2014.csv", sep = ";", skip = 9, header = F)
+df15 <- read.csv("INMET_S_RS_A801_PORTO ALEGRE_01-01-2015_A_31-12-2015.csv", sep = ";", skip = 9, header = F)
+df16 <- read.csv("INMET_S_RS_A801_PORTO ALEGRE_01-01-2016_A_31-12-2016.csv", sep = ";", skip = 9, header = F)
+df17 <- read.csv("INMET_S_RS_A801_PORTO ALEGRE_01-01-2017_A_31-12-2017.csv", sep = ";", skip = 9, header = F)
+df18 <- read.csv("INMET_S_RS_A801_PORTO ALEGRE_01-01-2018_A_31-12-2018.csv", sep = ";", skip = 9, header = F)
+df19 <- read.csv("INMET_S_RS_A801_PORTO ALEGRE_01-01-2019_A_31-12-2019.csv", sep = ";", skip = 9, header = F)
+df20 <- read.csv("INMET_S_RS_A801_PORTO ALEGRE_01-01-2020_A_31-12-2020.csv", sep = ";", skip = 9, header = F)
+df21 <- read.csv("INMET_S_RS_A801_PORTO ALEGRE_01-01-2021_A_31-12-2021.csv", sep = ";", skip = 9, header = F)
+df22 <- read.csv("INMET_S_RS_A801_PORTO ALEGRE - JARDIM BOTANICO_01-01-2022_A_31-12-2022.csv", sep = ";", skip = 9, header = F)
+df23 <- read.csv("INMET_S_RS_A801_PORTO ALEGRE - JARDIM BOTANICO_01-01-2023_A_31-07-2023.csv", sep = ";", skip = 9, header = F)
+
+df_total <- rbind(df12, df13, df14, df15, df16, df17, df18, df19, df20, df21, df22, df23) # juntado todos os dataframes
+df_total <- df_total %>% select(V1, V10) # selecionando apenas as variaveis DATA e TEMPERATURA MAX
+colnames(df_total) <- c('Data', 'Temperatura') # mudando o nome das colunas
+df_total$Temperatura <- as.numeric(gsub(",", ".", df_total$Temperatura)) # substituindo , por . para a variavel ficar numerica
+
+df_total <- df_total %>% 
+  group_by(Data) %>% 
+  summarise(Temperatura_Max = max(Temperatura)) # pegando apenas a temperatura maxíma de cada dia
+
+
+df_total$Data <- lubridate::ymd(df_total$Data) # deixando a variavel no formato DATA(%y %m %d)
+
+df_total <- df_total %>%
+  mutate(Temperatura_Max = ifelse(Temperatura_Max < -1000, NA, Temperatura_Max)) # removendo outliers
+
+df_total$Temperatura_Max <- na.locf(df_total$Temperatura_Max, na.rm = FALSE) # last observation carried forward (NA's preenchidos com a observação anterior a cada um deles)
+
+
+treino1 <- df_total %>% filter(year(Data) < 2023) 
+
+teste1 <-  df_total %>% filter(year(Data) == 2023)
+```
+
+```{css, echo=FALSE}
+.center {
+  display: table;
+  margin-right: auto;
+  margin-left: auto;
+}
+```
+
+```{=html}
+<style>
+body {
+text-align: justify}
+</style>
+```
+
+<br><br>
+
+<div class="panel panel-default">
+  <div class="panel-heading"> 
+
+# Introdução
+
+</div>
+</div>
+
+A análise das séries temporais de temperatura máxima diária é fundamental na meteorologia e em várias áreas decisivas, da agricultura ao planejamento urbano. O Instituto Nacional de Meteorologia (INMET) disponibiliza uma vasta quantidade de informações coletadas automaticamente por estações meteorológicas em todo o país, proporcionando uma valiosa fonte de dados para estudos e análises.
+
+Neste trabalho, focamos na análise da estação meteorológica de Porto Alegre (RS), abrangendo os útlimos 11 anos, mas excluindo os dados de 2023 para validação do modelo, ou seja, os modelos foram feitos utilizando os dados de temperatura máxima de Porto Alegre entre 2012 e 2022. Essa análise é de grande importância para compreender e prever variações climáticas, sendo relevante na agricultura, gestão de recursos hídricos, segurança pública, turismo, etc. Usaremos técnicas de análise de séries temporais e modelos de previsão para ajustar dados até o final de 2022, e avaliaremos sua precisão prevendo os dados até 31/07/2023 e comparando com os dados já observados. Dessa forma, buscamos aplicar as metodologias estudadas na disciplina de séries temporais contribuindo para o entendimento das tendências climáticas locais e aprimorar a capacidade de prever as variações nas temperaturas máximas diárias, com potenciais aplicações em diversas áreas.
+
+<br><br>
+
+<div class="panel panel-default">
+  <div class="panel-heading"> 
+  
+# Análise Descritiva
+
+</div>
+</div>
+
+No gráfico abaixo, temos a série temporal da temperatura máxima diária (°C) na cidade de Porto Alegre (RS) de $01/01/2012$ até $30/07/2023$. Em uma primeira análise, a série aparenta ter um comportamento estacionário e uma sazonalidade anual com 11 "ciclos" bem definidos ao longo dos 11 anos analisados. Para reforçar essas constatações, iremos analisar a função de autocorrelação (ACF), a função de autocorrelação parcial (ACF) e a série decomposta.
+
+<div class = 'center'>
+```{r}
+highchart(type = "stock") %>%
+  hc_title(text = "Temperatura Máxima Diária em Porto Alegre (RS)") %>% 
+  hc_scrollbar(
+    barBackgroundColor = "gray",
+    barBorderRadius = 7,
+    barBorderWidth = 0,
+    buttonBackgroundColor = "gray",
+    buttonBorderWidth = 0,
+    buttonArrowColor = "white",
+    buttonBorderRadius = 7,
+    rifleColor = "white",
+    trackBackgroundColor = "white",
+    trackBorderWidth = 1,
+    trackBorderColor = "silver",
+    trackBorderRadius = 7) %>% 
+  hc_add_series(data = df_total, type = "line", hcaes(x = Data, y = round(df_total$Temperatura_Max,1)), name="Série Total") %>% 
+    hc_tooltip(
+    pointFormat = "Temperatura Máxima: {point.y:.2f} °C"
+  )
+```
+</div>
+
+
+<br>
+
+Pelo gráfico da função de autocorrelação gerado, podemos visualizar os padrões sazonais na série, com picos significativos na ACF em intervalos regulares. Além disso, temos fortes indícios da presença de componentes autoregressivos (AR).
+
+
+<div class = 'center'>
+```{r}
+acf1 <- acf(treino1$Temperatura_Max, lag.max = 4000, main = "ACF - Temperatura Máxima", plot = F)
+hchart(acf1)
+```
+</div>
+
+<br>
+
+Já com o gráfico da função de autocorrelação parcial (PACF), podemos visualizar que não há lags significativos na PACF após os 100 primeiros lags aproximadamente, indicando que a série não possui dependência de longo prazo. No entanto, a presença de lags significativos no início da série e em direções diferentes nos dão indícios da presença de componente de média móvel (MA) e a necessidade de modelos AR de diferentes ordens em partes diferentes da série.
+
+
+<div class = 'center'>
+```{r echo=FALSE}
+pacf1 <- pacf(treino1$Temperatura_Max, lag.max = 1000, main = "PACF - Temperatura Máxima", plot = F)
+hchart(pacf1)
+```
+</div>
+
+
+```{r}
+treino <- ts(treino1$Temperatura_Max, frequency = 365, start = c(2012,1,1), end = c(2023,1,1))
+teste <- ts(teste1$Temperatura_Max, start = c(2023, 1,1), frequency = 365)
+total <- ts(df_total$Temperatura_Max, start = c(2012,1,1), end = c(2023,7,31), frequency = 365)
+```
+
+<br>
+
+Abaixo, o gráfico mostra os seguintes componentes:
+
+-   **Série Temporal Original:** A série temporal bruta, que inclui tendência, sazonalidade e erro.
+
+-   **Tendência:** A componente de tendência, que representa a direção geral do comportamento da série ao longo do tempo.
+
+-   **Sazonalidade:** A componente sazonal, que representa os padrões que se repetem em intervalos regulares, como sazonalidade anual, mensal, etc.
+
+-   **Erro (Resíduos):** A componente de erro, que representa o que resta na série após a remoção da tendência e da sazonalidade.
+
+<div class = 'center'>
+```{r fig.align='center'}
+treino %>%
+  decompose() %>%
+  autoplot() + 
+  theme_minimal()
+```
+</div>
+
+<br><br>
+
+# Metodologia
+
+
+
+
+
+  
+### Teste de Raíz Unitária
+
+
+
+Antes de partirmos para a modelagem da série, iremos realizar o teste Teste de Dickey-Fuller Aumentado (ADF), utilizado para avaliar se a série temporal é realmente estacionária ou não estacionária.
+
+```{r warning=FALSE}
+adf.test(treino)
+```
+
+Pelo resultado acima podemos ver que o $p.valor < 0.05$, ou seja, a um nível de significância de 5%, rejeitamos a hipótese nula. Portando, concluímos que há evidências de que a série seja estacionária, estando também de acordo com os resultados das análises gráficas realizadas anteriormente.
+
+
+
+<br><br>
+
+
+### Modelo 1 - ARIMA(1,0,3)
+
+
+
+Para modelar séries temporais com componentes sazonais, utilizamos modelos ARIMA sazonais, conhecidos como SARIMA (Seasonal AutoRegressive Integrated Moving Average). Um modelo SARIMA é uma extensão do ARIMA que incorpora termos sazonais para capturar a variação sazonal nos dados.
+
+O SARIMA é denotado como $SARIMA(p, d, q)(P, D, Q)$, onde:
+
+-   "p": é a ordem do componente AR não sazonal.
+-   "d": é a ordem de integração não sazonal.
+-   "q": é a ordem do componente MA não sazonal.
+-   "P": é a ordem do componente AR sazonal.
+-   "D": é a ordem de integração sazonal.
+-   "Q": é a ordem do componente MA sazonal.
+
+No *software R*, utilizamos a função $auto.arima()$ que automatiza o processo de seleção do modelo ARIMA. Ela explora várias combinações de parâmetros p (ordem do componente AR), d (ordem de integração) e q (ordem do componente MA) e fornece o modelo ARIMA com o menor valor de AIC ou BIC como o melhor modelo. Após identificar possíveis modelos ARIMA não sazonais, utilizando o parâmetro $seazonal=TRUE$, o algoritmo então estende a busca para modelos SARIMA, que incluem componentes sazonais (P, D, Q, s) além dos componentes não sazonais. Ele ajusta modelos SARIMA com diferentes valores de P (AR sazonal), D (integração sazonal), Q (MA sazonal) e s (período da sazonalidade) e calcula os critérios de informação para cada modelo.
+
+Para ajustar o modelo, utilizamos apenas os dados até 2022 (no qual chamamos de "treino") para então fazer a previsão até os dias atuais (a qual chamamos de "teste").
+
+```{r echo=TRUE}
+model1 <- auto.arima(treino, seasonal = TRUE)
+summary(model1)
+```
+
+O modelo pode ser definido como,
+
+$$X_t = c + \phi X_{t-1} + \theta \epsilon_{t-1} + \theta \epsilon_{t-2} + \theta \epsilon_{t-3} + \epsilon$$
+
+em que os parâmetros encontrados foram,
+
+$$X_t = 25.74 + 0.99 X_{t-1} -0.27 \epsilon_{t-1} -0.36 \epsilon_{t-2} -0.17 \epsilon_{t-3} + \epsilon$$
+
+<br>
+
+Fazendo o forecast (previsão) do modelo para os dias atuais temos:
+
+<div class = 'center'>
+```{r}
+forecasted <- forecast(model1, h = length(teste))
+
+forecasted_data <- data.frame(
+  Date = teste1$Data,
+  Mean = forecasted$mean,
+  lo80 = forecasted$lower,
+  up80 = forecasted$upper
+)
+
+highchart(type = "stock") %>%
+  hc_title(text = "Temperatura Máxima Diária em Porto Alegre (RS)") %>% 
+  hc_rangeSelector(selected = 4) %>% 
+  hc_scrollbar() %>% 
+  hc_add_series(data = df_total, type = "line", hcaes(x = Data, y = round(df_total$Temperatura_Max, 1)), name = "Temperatura Máxima", dataLabels = list(format = "{y:.2f} °C")) %>% 
+  hc_add_series(data = forecasted_data, type = "arearange", hcaes(x = Date, low = lo80.95., high = up80.95.), name = "Intervalo") %>% 
+  hc_add_series(data = forecasted_data, type = "line", hcaes(x = Date, y = Mean), name = "Média Prevista") %>% 
+  hc_tooltip(
+    pointFormat = "{series.name}: {point.y:.2f} °C"
+  )
+
+```
+</div>
+
+
+No entanto, para validarmos o modelo, precisamos antes verificar se os resíduos não são autocorrelacionados a partir da análise da função de autocorrelação dos resíduos e do teste Ljung-Box:
+
+<br>
+<div class = 'center'>
+```{r}
+# Realize o teste de Durbin-Watson nos resíduos do seu modelo
+acf2 <- acf(model1$residuals, lag.max = 20, plot = F)
+hchart(acf2)
+
+Box.test(forecasted$residuals, lag=20, type="Ljung-Box")
+
+```
+</div>
+
+<br>
+
+O correlograma mostra que as autocorrelações para os erros de previsão praticamente não excedem os limites de significância para defasagens 1-20. Além disso, o p-valor para o teste Ljung-Box é $0.02236$ indicando que não há muita evidência de autocorrelações diferentes de zero nas defasagens 1-20. Portanto, podemos concluir que os resíduos não são autocorrelacionados.
+
+Ademais, outro passo para verificar se o modelo preditivo pode ser melhorado é investigar se os erros de previsão são normalmente distribuídos com média zero e variância constante.
+
+
+<div class = 'center'>
+```{r}
+plotForecastErrors <- function(forecasterrors)
+  {
+    # make a histogram of the forecast errors:
+  mybinsize <- IQR(forecasterrors, na.rm = TRUE)/4
+    mysd   <- sd(forecasterrors, na.rm = TRUE)
+    mymin  <- min(forecasterrors, na.rm = TRUE) - mysd*5
+    mymax  <- max(forecasterrors, na.rm = TRUE) + mysd*3
+    # generate normally distributed data with mean 0 and standard deviation mysd
+    mynorm <- rnorm(10000, mean=0, sd=mysd)
+    mymin2 <- min(mynorm, na.rm = TRUE)
+    mymax2 <- max(mynorm, na.rm = TRUE)
+    if (mymin2 < mymin ) { mymin <- mymin2}
+    if (mymax2 > mymax) { mymax <- mymax2}
+    # make a red histogram of the forecast errors, with the normally distributed data overlaid:
+    mybins <- seq(mymin, mymax, mybinsize)
+    hist(forecasterrors, col="red", freq=FALSE, breaks=mybins)
+    # freq=FALSE ensures the area under the histogram = 1
+    # generate normally distributed data with mean 0 and standard deviation mysd
+    myhist <- hist(mynorm, plot=FALSE, breaks=mybins)
+    # plot the normal curve as a blue line on top of the histogram of forecast errors:
+    points(myhist$mids, myhist$density, type="l", col="blue", lwd=2)
+}
+#plot a histogram (with overlaid normal curve) of the forecast errors for the rainfall predictions
+#plotForecastErrors(forecasted$residuals)
+
+data <- forecasted$residuals
+data <- round(data, 3)
+# Crie o histograma usando highcharter
+highchart() %>%
+  hc_chart(type = "column") %>%
+  hc_title(text = "Histograma de Resíduos") %>%
+  hc_xAxis(categories = hist(data, plot = FALSE)$breaks) %>%
+  hc_yAxis(title = list(text = "Frequência")) %>%
+  hc_add_series(data = hist(data, plot = FALSE)$counts, name = "Frequência", color = "red")
+        
+```
+
+</div>
+
+O teste Ljung-Box não revela evidências suficientes de que exista autocorrelações diferentes de zero nos erros de previsão na amostra, as variações nos erros de previsão parecem aproximadamente constantes e os erros de previsão parecem distribuídos normalmente. Portanto, podemos concluir que o **modelo ARIMA(1,0,3) é um modelo válido.**
+
+
+
+
+<br><br>
+
+
+  
+### Modelo 2 - SARIMA(3,0,0)(0,1,0)[365]
+
+
+
+Apesar do modelo anterior ter sido considerado válido e com uma acurácia significativa ao ajuste dos dados de treino, podemos perceber que mesmo com o parâmetro $seazonal=TRUE$ a função auto.arima() não indicou componentes sazonais que havíamos verificado que estão presentes na série nas etapas anteriores. Portanto, neste modelo iremos utilizar o parâmetro $D=1$, indicando que se deseja aplicar uma diferenciação sazonal de primeira ordem à série temporal. Isso significa que, em cada período sazonal, os valores da série serão subtraídos dos valores do período sazonal anterior para remover a sazonalidade.
+
+```{r echo=TRUE}
+model2 <- auto.arima(treino, D = 1)
+summary(model2)
+```
+
+O modelo pode ser definido como,
+
+$$\nabla_{365}X_t = \phi X_{t-1} + \phi X_{t-2} + \phi X_{t-3} + \epsilon$$
+
+em que os parâmetros encontrados foram
+
+$$\nabla_{365}X_t = 0.71 X_{t-1} -0.19 X_{t-2} + 0.05 X_{t-3} + \epsilon$$
+
+<br>
+
+Fazendo o forecast (previsão) do modelo para os dias atuais temos:
+
+<div class = 'center'>
+```{r}
+# Fazer as previsões
+forecasted2 <- forecast(model2, h = length(teste))
+
+forecasted_data2 <- data.frame(
+  Date = teste1$Data,
+  Mean = forecasted2$mean,
+  lo80 = forecasted2$lower,
+  up80 = forecasted2$upper
+)
+
+# Criar um gráfico interativo usando highcharter
+ 
+highchart(type = "stock") %>%
+  hc_title(text = "Temperatura Máxima Diária em Porto Alegre (RS)") %>% 
+  hc_rangeSelector(selected = 4) %>% 
+  hc_scrollbar() %>% 
+  hc_add_series(data = df_total, type = "line", hcaes(x = Data, y = round(df_total$Temperatura_Max, 1)), name = "Temperatura Máxima", dataLabels = list(format = "{y:.2f} °C")) %>% 
+  hc_add_series(data = forecasted_data2, type = "arearange", hcaes(x = Date, low = lo80.95., high = up80.95.), name = "Intervalo") %>% 
+  hc_add_series(data = forecasted_data2, type = "line", hcaes(x = Date, y = Mean), name = "Média Prevista") %>% 
+  hc_tooltip(
+    pointFormat = "{series.name}: {point.y:.2f} °C"
+  )
+
+```
+
+</div>
+<br>
+
+Assim como feito anteriormento, iremos verificar se o novo modelo é válido,
+
+<div class = 'center'>
+```{r}
+# Realize o teste de Durbin-Watson nos resíduos do seu modelo
+acf3 <- acf(model2$residuals, lag.max = 20, plot = F)
+hchart(acf3)
+```
+</div>
+
+```{r}
+Box.test(forecasted2$residuals, lag=20, type="Ljung-Box")
+```
+
+<br>
+
+O correlograma mostra que as autocorrelações para os erros de previsão praticamente não excedem os limites de significância para defasagens 1-20. Além disso, o p-valor para o teste Ljung-Box é $0.02943$ indicando que não há muita evidência de autocorrelações diferentes de zero nas defasagens 1-20. Portanto, podemos concluir que os resíduos não são autocorrelacionados.
+
+Além disso, os erros de previsão têm variância constante ao longo do tempo e são normalmente distribuídos com média zero
+
+<div class = 'center'>
+```{r}
+#plot a histogram (with overlaid normal curve) of the forecast errors for the rainfall predictions
+data <- forecasted2$residuals
+data <- round(data, 3)
+# Crie o histograma usando highcharter
+highchart() %>%
+  hc_chart(type = "column") %>%
+  hc_title(text = "Histograma de Resíduos") %>%
+  hc_xAxis(categories = hist(data, plot = FALSE)$breaks) %>%
+  hc_yAxis(title = list(text = "Frequência")) %>%
+  hc_add_series(data = hist(data, plot = FALSE)$counts, name = "Frequência", color = "red")
+```
+</div>
+
+Portanto, podemos concluir que o modelo SARIMA(3,0,0)(0,1,0)[365] também é válido.
+
+
+
+<br><br>
+
+
+
+<div class="panel panel-default">
+  <div class="panel-heading"> 
+
+# Conclusão
+
+</div>
+</div>
+
+
+<div class = 'center'>
+```{r}
+highchart(type = "stock") %>%
+  hc_title(text = "Temperatura Máxima Diária em Porto Alegre (RS)") %>% 
+  hc_rangeSelector(selected = 4) %>% 
+  hc_scrollbar() %>% 
+  hc_add_series(data = df_total, type = "line", hcaes(x = Data, y = round(df_total$Temperatura_Max, 1)), name = "Temperatura Máxima", dataLabels = list(format = "{y:.2f} °C")) %>% 
+  hc_add_series(data = forecasted_data2, type = "line", hcaes(x = Date, y = Mean), name = "Modelo 2") %>% 
+  hc_add_series(data = forecasted_data, type = "line", hcaes(x = Date, y = Mean), name = "Modelo 1") %>% 
+  hc_tooltip(
+    pointFormat = "{series.name}: {point.y:.2f} °C"
+  )
+```
+
+</div>
+
+<br>
+
+```{r}
+AICs <- data.frame("Modelo 1" = model1$aic,
+                   "Modelo 2" = model2$aic)
+
+rownames(AICs) <- "AIC"
+
+
+kbl(AICs, escape = FALSE) %>%
+  kable_paper("striped", full_width = FALSE)
+```
+
+<br>
+
+Portanto, encontramos que os dois modelos gerados são válidos. Pelo AIC, podemos ver que o menor deles é o Modelo 1, indicando que este teria um melhor ajuste aos dados. No entanto, o gráfico evidencia que o Modelo 2 teve um desempenho muito mais acurado ao compararmos as médias dos valores preditos.
