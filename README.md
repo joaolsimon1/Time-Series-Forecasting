@@ -3,6 +3,8 @@
 ## 📌 Project Description
 This repository contains a final project for a Time Series Analysis course, focusing on modeling daily maximum temperatures in Porto Alegre, Brazil using data from INMET (National Institute of Meteorology). The main objective was to develop SARIMA models to predict daily maximum temperatures and compare their performance with actual 2023 data.
 
+Link to the report compiled in HTML: [https://rpubs.com/joaolsimon1/time_series_modeling]
+
 ## Contents
 - **RMarkdown Code**: (`time_series_analysis.Rmd`) contains the complete analysis, from data import to SARIMA modeling and validation.
 - **Data**:
